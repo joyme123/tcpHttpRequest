@@ -290,6 +290,7 @@ public class HttpRequest implements IHttpRequest{
 			System.err.println(this.header+this.body);
 			writer.write(this.header+this.body);
 			writer.flush();
+			
 			InputStreamReader reader = new InputStreamReader(socket.getInputStream());
 			char[] cbuf = new char[1000];
 			while(reader.read(cbuf) != -1){
