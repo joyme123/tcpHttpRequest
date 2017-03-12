@@ -6,11 +6,13 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.net.Socket;
+import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -41,8 +43,8 @@ public class HttpRequest implements IHttpRequest{
 	private String userAgent;
 	//消息头
 	private String header;
-	//消息体
-	private String body;
+	//消息体,初始化为空，是为了在GET的时候直接为空
+	private String body = "";	
 	//boundary
 	private String boundary;
 	
@@ -62,7 +64,7 @@ public class HttpRequest implements IHttpRequest{
 	public HttpRequest(){
 		this.method = "GET";	//默认是GET
 		this.version = "HTTP/1.1";	//版本默认是1.0
-		this.cookie = "id_token=2%7C27a07077d82fac0e1761290f97b1d2ec7b3f8733a784c38d55c2ad47f502fd60%7C1";		//cookie默认为空
+		this.cookie = "";		//cookie默认为空
 		this.accept = "*/*";
 		this.acceptEncoding = "deflate, br";	//默认为空
 		this.userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36";
@@ -79,7 +81,7 @@ public class HttpRequest implements IHttpRequest{
 	public void setParams(HashMap<String, String> paramsMap) {
 		this.paramsMap = paramsMap;
 	}
-
+	
 	@Override
 	public void setHttpVersion(String version) {
 		this.version = version;
@@ -127,17 +129,51 @@ public class HttpRequest implements IHttpRequest{
 		this.hasFile = true;
 	}
 	
+	/**
+	 * 手动添加请求参数
+	 * @param key
+	 * @param value
+	 */
+	public void appendParam(String key,String value){
+		this.paramsMap.put(key, value);
+	}
+	
 	private void constructHeader(){
 		StringBuilder sb = new StringBuilder();
+		String params = "";
 		//构造请求的方法，路径及版本
-		sb.append(this.method+HttpRequest.SPACE+this.path+HttpRequest.SPACE+this.version+HttpRequest.CARRIAGERETURN);
+		if(this.method.equals(HttpRequest.GET_METHOD)){
+			//如果是GET请求方式，需要构造请求参数
+			StringBuilder getSb = new StringBuilder();
+			Set<String> keySet = this.paramsMap.keySet();
+			boolean isFirst = true;
+			for(String key:keySet){
+				String paramStr = "";
+				try {
+					paramStr = URLEncoder.encode(this.paramsMap.get(key),"utf-8");
+				} catch (UnsupportedEncodingException e) {
+					e.printStackTrace();
+				}
+				if(isFirst){
+					getSb.append("?"+key+"="+paramStr);
+				}else{
+					getSb.append("&"+key+"="+paramStr);
+				}
+			}
+			params = getSb.toString();
+		}
+		
+		sb.append(this.method+HttpRequest.SPACE+this.path+params+HttpRequest.SPACE+this.version+HttpRequest.CARRIAGERETURN);
 		//构造host
 		sb.append("HOST:"+HttpRequest.SPACE+this.host+HttpRequest.CARRIAGERETURN);
 		//构造Connection
 		if(this.version.equals(HttpRequest.HTTP1_1))
 			sb.append("Connection:"+HttpRequest.SPACE+"keep-alive"+HttpRequest.CARRIAGERETURN);
-		//这一步构造消息体的长度
-		sb.append("Content-Length:"+HttpRequest.SPACE+String.valueOf(this.body.length())+HttpRequest.CARRIAGERETURN);
+		//如果是POST才构造消息体的长度
+		if(this.method.equals(POST_METHOD)){
+			//这一步构造消息体的长度
+			sb.append("Content-Length:"+HttpRequest.SPACE+String.valueOf(this.body.length())+HttpRequest.CARRIAGERETURN);
+		}
 		//这一步构造接收域
 		sb.append("Accept:"+HttpRequest.SPACE+this.accept+HttpRequest.CARRIAGERETURN);
 		//这一步构造接收的编码格式
@@ -153,7 +189,10 @@ public class HttpRequest implements IHttpRequest{
 				sb.append("Content-Type:"+HttpRequest.SPACE+this.postContentType+HttpRequest.CARRIAGERETURN);
 		}
 		//这一步构造Cookie
-		sb.append("Cookie:"+HttpRequest.SPACE+this.cookie+HttpRequest.CARRIAGERETURN);
+		if(this.cookie != null && !this.cookie.equals("")){
+			sb.append("Cookie:"+HttpRequest.SPACE+this.cookie+HttpRequest.CARRIAGERETURN);
+		}
+			
 		sb.append(HttpRequest.CARRIAGERETURN);
 		this.header = sb.toString();
 	} 
@@ -168,7 +207,12 @@ public class HttpRequest implements IHttpRequest{
 			for(Entry<String,String> params : entrySet){
 				if(!first)
 					sb.append("&");
-				sb.append(params.getKey()+"="+params.getValue());
+				try {
+					sb.append(params.getKey()+"="+URLEncoder.encode(params.getValue(),"utf-8"));
+				} catch (UnsupportedEncodingException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 				first = false;
 			}
 			sb.append(HttpRequest.CARRIAGERETURN);
@@ -208,6 +252,7 @@ public class HttpRequest implements IHttpRequest{
 					while(reader.read(c) != -1){
 						sb.append(c);
 					}
+					reader.close();
 				} catch (FileNotFoundException e) {
 					//TODO 这里要做异常处理
 					e.printStackTrace();
@@ -224,8 +269,11 @@ public class HttpRequest implements IHttpRequest{
 
 	@Override
 	public String request() {
-		this.constructBody();	//必须先构造body，以获得body的长度
-		this.constructHeader();	//构造消息头]
+		//如果是post则构造消息体
+		if(this.method.equals(POST_METHOD)){
+			this.constructBody();	//必须先构造body，以获得body的长度
+		}
+		this.constructHeader();	//构造消息头
 		StringBuilder response = new StringBuilder();	//请求的回应
 		String hostWithoutPort = null;	//host,不带port
 		int port = 80;
@@ -239,7 +287,7 @@ public class HttpRequest implements IHttpRequest{
 		try {
 			Socket socket = new Socket(hostWithoutPort,port);
 			OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());
-			System.out.println(this.header+this.body);
+			System.err.println(this.header+this.body);
 			writer.write(this.header+this.body);
 			writer.flush();
 			InputStreamReader reader = new InputStreamReader(socket.getInputStream());
